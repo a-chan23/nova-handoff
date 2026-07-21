@@ -1,0 +1,8 @@
+# generated each run — not source
+nova_handoff.html
+tickets.json
+*.log
+handoff.log
+launchd.out.log
+launchd.err.log
+node_modules/
