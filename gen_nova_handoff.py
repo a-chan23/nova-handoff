@@ -7,9 +7,9 @@ Ticket object:
    "statusChanges":[{"ts","author","from","to"}], "comments":[{"ts","author","body"}]}
 Reference "now" for the 12h window + QA-age = env HANDOFF_NOW (ISO) else system now (UTC).
 
-Views: changes-since-last-handoff; IN QA aging watch; module-overlap (regress-together)
-watch; full pipeline in collapsible sections with collapsible per-ticket activity logs that
-surface parsed Problem / Fix / How-to-test wrap-ups.
+Dark three-column dashboard: left nav rail; center column with stat cards, a 10-day
+pipeline trend, In-QA aging watch, module/component regression risk, and collapsible
+pipeline sections; right rail with the "since last handoff" activity feed.
 """
 import json, os, html, re
 from datetime import datetime, timedelta
@@ -24,12 +24,12 @@ STATUS_ORDER = ["IN QA", "READY FOR PROD", "DEPLOYED TO PROD"]
 # Stage colours mapped to nova/Nebula semantics: In QA = caution orange, Ready = electric
 # purple (brand), Deployed = nova green (success/done).
 STATUS_META = {
-    "IN QA":            ("#e78c49", "In QA"),
-    "READY FOR PROD":   ("#4a1fff", "Ready for Prod"),
-    "DEPLOYED TO PROD": ("#007769", "Deployed to Prod"),
+    "IN QA":            ("#f0a45e", "In QA",          "🧪"),
+    "READY FOR PROD":   ("#8b93ff", "Ready for Prod", "✅"),
+    "DEPLOYED TO PROD": ("#2fd6a6", "Deployed",       "🚀"),
 }
-PRIO_COLOR = {"Critical":"#d63122","Highest":"#e78c49","High":"#e78c49",
-              "Medium":"#767676","Low":"#b9bcb7","-":"#b9bcb7"}
+PRIO_COLOR = {"Critical":"#ff6f61","Highest":"#f0a45e","High":"#f0a45e",
+              "Medium":"#8b93a7","Low":"#5f6675","-":"#5f6675"}
 STAGE_SHORT = {"IN QA":"QA", "READY FOR PROD":"Ready", "DEPLOYED TO PROD":"Prod"}
 
 # nova product modules → keyword lists (matched against summary + comment text, lowercased).
@@ -106,9 +106,9 @@ def fmt_dwell(td):
 
 def qa_color(td):
     days = td.total_seconds() / 86400
-    if days >= 3: return "#d63122"   # nova error — stuck (>3d)
-    if days >= 2: return "#e78c49"   # nova caution — aging 2–3d
-    return "#54ba73"                 # nova success — fresh (<2d)
+    if days >= 3: return "#ff6f61"   # nova error — stuck (>3d)
+    if days >= 2: return "#f0a45e"   # nova caution — aging 2–3d
+    return "#2fd6a6"                 # nova success — fresh (<2d)
 
 def stage_counts(tks):
     stg = {}
@@ -116,31 +116,10 @@ def stage_counts(tks):
         k = norm(t["currentStatus"]); stg[k] = stg.get(k, 0) + 1
     return stg
 
-def dist_pills(stg):
-    return "".join(f'<span class="mini" style="--sc:{STATUS_META[s][0]}">{stg[s]} {STAGE_SHORT[s]}</span>'
-                   for s in STATUS_ORDER if stg.get(s))
-
 def risk_of(tks):
     stg = stage_counts(tks)
     spans = len([k for k in stg if k in STATUS_ORDER]) > 1
-    return ("HIGH", "#d63122") if (spans or len(tks) >= 4) else ("MED", "#e78c49")
-
-def stage_columns(tks):
-    """Render the cluster's tickets into three stage columns (QA · Ready · Prod)."""
-    groups = {s: [] for s in STATUS_ORDER}
-    for t in tks:
-        groups.get(norm(t["currentStatus"]), groups[STATUS_ORDER[0]])
-        k = norm(t["currentStatus"])
-        (groups[k] if k in groups else groups.setdefault("OTHER", [])).append(t)
-    cols = []
-    for s in STATUS_ORDER:
-        sc = STATUS_META[s][0]
-        chips = "".join(f'<a class="scol-key" href="{BASE_URL}{t["key"]}">{t["key"]}</a>'
-                        for t in sorted(groups[s], key=lambda x: x["key"]))
-        body = chips if chips else '<span class="scol-none">—</span>'
-        cols.append(f'<div class="stage-col" style="--sc:{sc}"><div class="stage-h">{STAGE_SHORT[s]} · {len(groups[s])}</div>'
-                    f'<div class="scol-keys">{body}</div></div>')
-    return '<div class="stages">' + "".join(cols) + '</div>'
+    return ("HIGH", "#ff6f61") if (spans or len(tks) >= 4) else ("MED", "#f0a45e")
 
 def ticket_tags(t):
     text = (t.get("summary","") + " " + " ".join(c.get("body","") for c in t.get("comments",[]))).lower()
@@ -196,6 +175,155 @@ def parse_wrapup(comments):
         return None
     return {"problem": problem, "fix": fix, "test": test}
 
+# ── dark-dashboard render helpers ───────────────────────────────────────────
+def initials(name):
+    parts = [p for p in re.split(r'\s+', (name or "").strip()) if p]
+    if not parts: return "—"
+    if len(parts) == 1: return parts[0][:2].upper()
+    return (parts[0][0] + parts[1][0]).upper()
+
+def _short_body(s, n=150):
+    s = re.sub(r'\s+', ' ', (s or "")).strip()
+    return s if len(s) <= n else s[:n-1].rstrip() + "…"
+
+def _smooth(pts, baseline):
+    """Catmull-Rom → cubic-bezier path. Returns (line_d, area_d)."""
+    if not pts:
+        return "", ""
+    if len(pts) == 1:
+        x, y = pts[0]
+        return f"M {x:.1f},{y:.1f}", f"M {x:.1f},{y:.1f} L {x:.1f},{baseline} Z"
+    d = f"M {pts[0][0]:.1f},{pts[0][1]:.1f}"
+    for i in range(len(pts) - 1):
+        p0 = pts[i-1] if i > 0 else pts[0]
+        p1, p2 = pts[i], pts[i+1]
+        p3 = pts[i+2] if i + 2 < len(pts) else pts[-1]
+        c1x = p1[0] + (p2[0]-p0[0]) / 6; c1y = p1[1] + (p2[1]-p0[1]) / 6
+        c2x = p2[0] - (p3[0]-p1[0]) / 6; c2y = p2[1] - (p3[1]-p1[1]) / 6
+        d += f" C {c1x:.1f},{c1y:.1f} {c2x:.1f},{c2y:.1f} {p2[0]:.1f},{p2[1]:.1f}"
+    area = d + f" L {pts[-1][0]:.1f},{baseline} L {pts[0][0]:.1f},{baseline} Z"
+    return d, area
+
+def trend_svg(tickets, now):
+    """10-day trend: count of transitions INTO 'IN QA' (entered) vs 'DEPLOYED TO PROD'."""
+    days = [(now - timedelta(days=i)).date() for i in range(9, -1, -1)]
+    idx = {d: i for i, d in enumerate(days)}
+    qa = [0]*10; prod = [0]*10
+    for t in tickets:
+        for sc in t.get("statusChanges", []):
+            try: d = parse(sc["ts"]).astimezone(UTC).date()
+            except Exception: continue
+            if d not in idx: continue
+            to = norm(sc.get("to"))
+            if to == "IN QA": qa[idx[d]] += 1
+            elif to == "DEPLOYED TO PROD": prod[idx[d]] += 1
+    X0, X1, YT, YB = 34, 886, 18, 210
+    maxv = max(2, max(qa + prod))
+    xs = [X0 + (X1 - X0) * i / 9 for i in range(10)]
+    def y(v): return YB - (v / maxv) * (YB - YT)
+    qa_pts = list(zip(xs, [y(v) for v in qa]))
+    pr_pts = list(zip(xs, [y(v) for v in prod]))
+    qa_line, qa_area = _smooth(qa_pts, YB)
+    pr_line, pr_area = _smooth(pr_pts, YB)
+    o = ['<svg viewBox="0 0 900 240" width="100%" preserveAspectRatio="none" style="display:block">']
+    o.append('<defs><linearGradient id="gp" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#2fd6a6" stop-opacity=".28"/><stop offset="1" stop-color="#2fd6a6" stop-opacity="0"/></linearGradient>'
+             '<linearGradient id="gq" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#f0a45e" stop-opacity=".22"/><stop offset="1" stop-color="#f0a45e" stop-opacity="0"/></linearGradient></defs>')
+    for frac in (0, 1/3, 2/3, 1):
+        gy = YB - frac * (YB - YT); lab = round(maxv * frac)
+        o.append(f'<line x1="{X0}" y1="{gy:.0f}" x2="{X1}" y2="{gy:.0f}" stroke="#242a38" stroke-width="1"/>')
+        o.append(f'<text x="26" y="{gy+3:.0f}" fill="#5f6675" font-size="10" text-anchor="end" font-family="monospace">{lab}</text>')
+    o.append(f'<path d="{qa_area}" fill="url(#gq)"/><path d="{qa_line}" fill="none" stroke="#f0a45e" stroke-width="2.5" stroke-linecap="round"/>')
+    o.append(f'<path d="{pr_area}" fill="url(#gp)"/><path d="{pr_line}" fill="none" stroke="#2fd6a6" stroke-width="2.5" stroke-linecap="round"/>')
+    for i, d in enumerate(days):
+        o.append(f'<text x="{xs[i]:.0f}" y="231" fill="#5f6675" font-size="10" text-anchor="middle" font-family="monospace">{d.month}/{d.day}</text>')
+    o.append(f'<circle cx="{X1}" cy="{y(prod[-1]):.0f}" r="3.5" fill="#2fd6a6"/><circle cx="{X1}" cy="{y(qa[-1]):.0f}" r="3.5" fill="#f0a45e"/>')
+    o.append('</svg>')
+    return "".join(o)
+
+CSS = """
+    *{box-sizing:border-box;}
+    .nx{--bg:#0c0e13;--card:#151822;--card2:#1a1e2a;--line:#242a38;--fg:#e8eaf1;--muted:#8b93a7;--faint:#5f6675;
+      --brand:#7c6cff;--qa:#f0a45e;--ready:#8b93ff;--prod:#2fd6a6;--err:#ff6f61;
+      --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;--mono:source-code-pro,ui-monospace,Menlo,monospace;
+      background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5;
+      border-radius:18px;overflow:hidden;display:grid;grid-template-columns:216px 1fr 316px;min-height:760px;max-width:1380px;margin:0 auto;}
+    .nx a{color:inherit;text-decoration:none;}
+    .side{background:#0a0c11;border-right:1px solid var(--line);padding:20px 16px;display:flex;flex-direction:column;gap:6px;}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;margin:2px 4px 20px;}
+    .brand .lg{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),#b3a6ff);display:flex;align-items:center;justify-content:center;font-size:15px;}
+    .nav{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:11px;color:var(--muted);font-weight:600;font-size:13.5px;}
+    .nav.on{background:var(--card2);color:var(--fg);}
+    .nav .i{width:18px;text-align:center;opacity:.9;}
+    .nav .c{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint);}
+    .side .foot{margin-top:auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center;}
+    .side .foot h4{margin:0 0 4px;font-size:13.5px;}
+    .side .foot p{margin:0 0 10px;color:var(--muted);font-size:12px;}
+    .badge-live{display:inline-flex;align-items:center;gap:6px;background:rgba(47,214,166,.13);color:var(--prod);font-weight:700;font-size:11px;padding:5px 10px;border-radius:999px;}
+    .dot{width:7px;height:7px;border-radius:50%;background:currentColor;display:inline-block;}
+    .main{padding:24px 26px;overflow:auto;}
+    .hd{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:20px;}
+    .hd h1{margin:0 0 4px;font-size:24px;font-weight:800;letter-spacing:-.02em;}
+    .hd .sub{color:var(--muted);font-size:13.5px;}.hd .sub b{color:var(--fg);}
+    .pill{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:12.5px;color:var(--muted);font-family:var(--mono);white-space:nowrap;}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
+    .stat{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 17px;}
+    .stat .top{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;font-weight:600;}
+    .stat .ic{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;background:var(--tint);}
+    .stat .n{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:12px;line-height:1;}
+    .stat .d{font-size:12px;margin-left:9px;font-weight:700;}
+    .up{color:var(--prod);} .flat{color:var(--faint);}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;margin-bottom:18px;}
+    .card h3{margin:0;font-size:15px;font-weight:700;}
+    .card .hrow{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;}
+    .legend{display:flex;gap:14px;font-size:11.5px;color:var(--muted);font-family:var(--mono);}
+    .legend i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:middle;}
+    .rowlist{display:flex;flex-direction:column;gap:9px;}
+    .row{display:flex;align-items:center;gap:12px;background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 14px;}
+    .row .k{font-family:var(--mono);font-weight:700;font-size:12.5px;color:var(--ready);}
+    .row .ti{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg);font-size:13px;}
+    .row .who{color:var(--faint);font-size:11.5px;white-space:nowrap;}
+    .age{font-family:var(--mono);font-weight:700;font-size:11.5px;color:#0c0e13;padding:3px 9px;border-radius:7px;white-space:nowrap;}
+    .none{color:var(--faint);font-size:12.5px;padding:4px 2px;}
+    .mods{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+    .mod{background:var(--card2);border:1px solid var(--line);border-left:3px solid var(--mc);border-radius:12px;padding:12px 14px;}
+    .mod .mtop{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+    .mod .rk{font-family:var(--mono);font-size:10px;font-weight:800;padding:2px 7px;border-radius:6px;color:#0c0e13;}
+    .mod .nm{font-weight:700;font-size:13px;}
+    .mod .nm.mono{font-family:var(--mono);font-size:12px;}
+    .mini{display:flex;gap:6px;flex-wrap:wrap;}
+    .mp{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;}
+    details.sec{background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:11px;overflow:hidden;}
+    details.sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 16px;font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.05em;}
+    details.sec>summary::-webkit-details-marker{display:none;}
+    .chev{color:var(--faint);transition:transform .15s;}details[open]>summary .chev{transform:rotate(90deg);}
+    .sec .cnt{margin-left:auto;color:var(--faint);font-family:var(--mono);}
+    .tk{border-top:1px solid var(--line);padding:10px 16px;}
+    .tk .l1{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+    .tk .kk{font-family:var(--mono);font-weight:700;font-size:12px;color:var(--ready);}
+    .tk .tt{color:var(--fg);font-size:13px;}.tk .mt{color:var(--faint);font-size:11.5px;margin-top:3px;}
+    .chip{font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:999px;color:#0c0e13;}
+    .chip.new{background:var(--prod);}.chip.wrap{background:var(--brand);color:#fff;}
+    .cmp{font-family:var(--mono);font-size:10px;color:var(--ready);background:#8b93ff1a;border:1px solid var(--line);padding:1px 6px;border-radius:5px;}
+    .right{background:#0a0c11;border-left:1px solid var(--line);padding:22px 18px;overflow:auto;}
+    .stcard{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;text-align:center;margin-bottom:20px;}
+    .stcard .big{font-size:20px;font-weight:800;letter-spacing:-.01em;}
+    .stcard .sm{color:var(--muted);font-size:12px;margin-top:2px;font-family:var(--mono);}
+    .stcard .btns{display:flex;gap:8px;justify-content:center;margin-top:13px;}
+    .stcard .b{flex:1;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:8px;font-size:12px;font-weight:600;color:var(--muted);}
+    .feedh{font-weight:700;font-size:14px;margin:0 0 14px;}
+    .fitem{display:flex;gap:11px;padding:11px 0;border-top:1px solid var(--line);}
+    .fitem:first-of-type{border-top:none;}
+    .av{width:30px;height:30px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#0c0e13;}
+    .fitem .body{min-width:0;}
+    .fitem .who{font-weight:700;font-size:12.5px;}
+    .fitem .st{font-size:10px;font-weight:800;text-transform:uppercase;padding:1px 7px;border-radius:999px;color:#0c0e13;}
+    .fitem .meta{color:var(--faint);font-size:11px;font-family:var(--mono);margin-bottom:3px;}
+    .fitem .ftt{font-size:12.5px;color:var(--fg);}
+    .fitem .msg{color:var(--muted);font-size:12.5px;background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:7px 9px;margin-top:5px;}
+    .fitem .msg.flow{font-family:var(--mono);font-size:11.5px;}
+    @media(max-width:1080px){.nx{grid-template-columns:1fr;}.side,.right{border:none;border-top:1px solid var(--line);} .stats{grid-template-columns:1fr;} .mods{grid-template-columns:1fr;}}
+"""
+
 def report(tickets, now):
     cutoff = now - WINDOW
     by_status = {s: [] for s in STATUS_ORDER}
@@ -205,13 +333,22 @@ def report(tickets, now):
         by_status[s].sort(key=last_ts, reverse=True)
     counts = {s: len(by_status.get(s, [])) for s in STATUS_ORDER}
 
+    # tickets whose newest activity is within the 12h window
     delta = []
     for t in tickets:
-        recent = [a for a in activity(t) if a[0] >= cutoff]
-        if recent:
-            delta.append((t, recent))
-    delta.sort(key=lambda x: x[1][-1][0], reverse=True)
+        acts = activity(t)
+        if acts and acts[-1][0] >= cutoff:
+            delta.append((t, acts[-1]))
+    delta.sort(key=lambda x: x[1][0], reverse=True)
 
+    # arrivals INTO each status within the window (stat-card deltas)
+    arrivals = {s: 0 for s in STATUS_ORDER}
+    for t in tickets:
+        for s in STATUS_ORDER:
+            if any(norm(sc.get("to")) == s and parse(sc["ts"]) >= cutoff for sc in t.get("statusChanges", [])):
+                arrivals[s] += 1
+
+    # In-QA aging
     qa = []
     for t in by_status.get("IN QA", []):
         e = qa_entered(t)
@@ -219,284 +356,152 @@ def report(tickets, now):
             qa.append((t, now - e))
     qa.sort(key=lambda x: x[1], reverse=True)
 
+    def span(v): return len(set(norm(x["currentStatus"]) for x in v))
+
     # module overlap clusters (≥2 tickets share a module)
     tag_map = {}
     for t in tickets:
         for tag in ticket_tags(t):
             tag_map.setdefault(tag, []).append(t)
-    clusters = {k: v for k, v in tag_map.items() if len(v) >= 2}
-    def span(v): return len(set(norm(x["currentStatus"]) for x in v))
-    clusters = sorted(clusters.items(), key=lambda kv: (-span(kv[1]), -len(kv[1]), kv[0]))
+    clusters = sorted(((k, v) for k, v in tag_map.items() if len(v) >= 2),
+                      key=lambda kv: (-span(kv[1]), -len(kv[1]), kv[0]))
 
-    # finer: component (file-level) clusters
-    comp_map, comp_path, comp_mod = {}, {}, {}
+    # component (file-level) clusters
+    comp_map, comp_path = {}, {}
     for t in tickets:
         for comp, (path, mod) in ticket_components(t).items():
-            comp_map.setdefault(comp, []).append(t); comp_path[comp] = path; comp_mod[comp] = mod
+            comp_map.setdefault(comp, []).append(t); comp_path[comp] = path
     comp_clusters = sorted(((c, v) for c, v in comp_map.items() if len(v) >= 2),
                            key=lambda kv: (-span(kv[1]), -len(kv[1]), kv[0]))
 
-    o = ['<style>', '''
-    :root{--bg:#f4f7fc;--fg:#262626;--muted:#6b6b6b;--faint:#767676;--line:#e3e8f1;
-      --card:#fff;--panel:#eff6fa;--link:#4a1fff;--brand:#4a1fff;--hi:#eae7f7;--hiline:#d7cff1;
-      --shadow:0 1px 3px rgba(38,38,38,.07),0 1px 2px rgba(38,38,38,.04);
-      --mono:source-code-pro,ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-      --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-    *{box-sizing:border-box;}
-    .wrap{max-width:880px;margin:0 auto;padding:14px 14px 48px;background:var(--bg);font-family:var(--sans);font-size:15px;line-height:1.5;color:var(--fg);}
-    .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--link);font-weight:600;}
-    .h1{font-size:25px;font-weight:700;letter-spacing:-0.02em;margin:3px 0 5px;text-wrap:balance;}
-    .sub{color:var(--muted);margin:0 0 18px;font-size:13.5px;}.sub b{color:var(--fg);}
-    .stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 24px;}
-    .stat{flex:1 1 120px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 14px;position:relative;overflow:hidden;box-shadow:var(--shadow);}
-    .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--sc);}
-    .stat .n{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1;}
-    .stat .l{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-top:5px;}
+    o = ['<style>', CSS, '</style>', '<div class="nx">']
 
-    .block-h{display:flex;align-items:baseline;gap:9px;margin:0 0 10px;flex-wrap:wrap;}
-    .block-h h2{font-size:17px;font-weight:700;margin:0;letter-spacing:-.01em;}
-    .block-h .meta{color:var(--faint);font-family:var(--mono);font-size:12px;}
+    # ── left rail ────────────────────────────────────────────────────────
+    o.append('<aside class="side">')
+    o.append('<div class="brand"><span class="lg">🚦</span> NOVA Handoff</div>')
+    o.append('<a class="nav on"><span class="i">🏠</span>Overview</a>')
+    for s in STATUS_ORDER:
+        c, label, ic = STATUS_META[s]
+        o.append(f'<a class="nav"><span class="i">{ic}</span>{label}<span class="c">{counts[s]}</span></a>')
+    o.append('<a class="nav"><span class="i">🔗</span>Module risk</a>')
+    o.append(f'<a class="nav" href="{BOARD_URL}"><span class="i">📋</span>Board</a>')
+    o.append('<div class="foot"><div class="badge-live"><span class="dot"></span>Cloud routine live</div>'
+             '<h4 style="margin-top:10px">Follow-the-sun</h4>'
+             '<p>Auto-posts 07:00 & 19:00 UTC — no machine needed.</p>'
+             f'<a class="b" style="display:block;background:var(--brand);color:#fff;border-radius:10px;padding:9px;font-weight:700" href="{BOARD_URL}">Open NOVA board</a></div>')
+    o.append('</aside>')
 
-    .hero{background:var(--hi);border:1px solid var(--hiline);border-radius:14px;padding:18px 20px;margin:0 0 22px;box-shadow:var(--shadow);}
-    .hero h2{font-size:18px;}
-    .d-item{padding:11px 0;border-top:1px solid var(--hiline);}.d-item:first-of-type{border-top:none;}
-    .d-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;}
-    .d-head a{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--link);text-decoration:none;}
-    .d-head .st{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 8px;border-radius:999px;color:#fff;background:var(--sc);}
-    .d-head .ti{color:var(--fg);font-size:13.5px;}
-    .d-log{margin:6px 0 0;padding:0;list-style:none;font-size:12.5px;}
-    .d-log li{display:flex;gap:9px;padding:2px 0;color:#3a4048;}
-    .d-log .tm{font-family:var(--mono);font-size:11.5px;color:var(--faint);white-space:nowrap;min-width:80px;}
-    .d-log .fl{font-family:var(--mono);color:var(--fg);}.d-log .fl b{color:var(--sc);}
-    .d-none{color:var(--muted);font-size:13.5px;}
-
-    .panel{border:1px solid var(--line);border-radius:14px;padding:16px 18px 10px;margin:0 0 22px;background:var(--card);box-shadow:var(--shadow);}
-    .qa-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line);}
-    .qa-row:first-of-type{border-top:none;}
-    .qa-age{font-family:var(--mono);font-weight:700;font-size:12.5px;color:#fff;padding:3px 9px;border-radius:7px;white-space:nowrap;min-width:66px;text-align:center;background:var(--ac);}
-    .qa-key{font-family:var(--mono);font-weight:600;font-size:12.5px;color:var(--link);text-decoration:none;white-space:nowrap;}
-    .qa-ti{color:var(--fg);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-    .qa-who{color:var(--faint);font-size:12px;white-space:nowrap;}
-    .legend{color:var(--faint);font-size:11.5px;margin:8px 0 4px;font-family:var(--mono);}
-
-    /* module & component risk cards (collapsible) */
-    details.riskcard{border:1px solid var(--line);border-left:5px solid var(--rc);border-radius:10px;margin:9px 0;background:#fff;overflow:hidden;box-shadow:var(--shadow);}
-    details.riskcard>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:11px 13px;}
-    details.riskcard>summary::-webkit-details-marker{display:none;}
-    details.riskcard[open]>summary{border-bottom:1px solid var(--line);}
-    .riskcard .chev{color:var(--faint);font-size:11px;transition:transform .15s ease;}
-    details.riskcard[open]>summary .chev{transform:rotate(90deg);}
-    .riskcard .lvl{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--rc);padding:2px 8px;border-radius:6px;letter-spacing:.04em;}
-    .riskcard .nm{font-weight:700;font-size:14px;}
-    .riskcard .nm.mono{font-family:var(--mono);font-size:13px;}
-    .riskcard .ct{font-size:11px;color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-variant-numeric:tabular-nums;}
-    .riskcard .dist{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;}
-    .mini{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--sc);padding:2px 7px;border-radius:999px;white-space:nowrap;}
-    .rc-body{padding:11px 13px 12px;}
-    .rc-path{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin:0 0 2px;word-break:break-all;}
-    .stages{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
-    .stage-col{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--sc);border-radius:8px;padding:7px 9px 8px;}
-    .stage-h{font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--sc);margin-bottom:6px;}
-    .scol-keys{display:flex;flex-direction:column;gap:4px;}
-    .scol-key{font-family:var(--mono);font-size:11.5px;color:var(--link);text-decoration:none;font-weight:600;}
-    .scol-key:hover{text-decoration:underline;}
-    .scol-none{color:var(--faint);font-size:12px;}
-    @media(max-width:560px){.stages{grid-template-columns:1fr;}}
-
-    details.sec{margin:0 0 12px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--shadow);}
-    details.sec>summary{list-style:none;cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:10px;font-weight:700;
-      font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--sc);background:var(--panel);}
-    details.sec>summary::-webkit-details-marker{display:none;}
-    .sec .dot{width:9px;height:9px;border-radius:50%;background:var(--sc);}
-    .sec .cnt{margin-left:auto;color:var(--faint);font-size:12px;font-weight:600;letter-spacing:0;}
-    .chev{transition:transform .15s ease;color:var(--faint);font-size:12px;}
-    details[open]>summary .chev{transform:rotate(90deg);}
-    .sec-body{padding:6px 10px 10px;}
-
-    details.tk{border:1px solid var(--line);border-left:4px solid var(--sc);border-radius:9px;margin:8px 4px;overflow:hidden;background:var(--card);}
-    details.tk[open]{box-shadow:0 1px 4px rgba(20,26,40,.05);}
-    details.tk>summary{list-style:none;cursor:pointer;padding:10px 13px;}
-    details.tk>summary::-webkit-details-marker{display:none;}
-    .tk-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-    .tk-key{font-family:var(--mono);font-weight:600;font-size:12.5px;color:var(--link);text-decoration:none;}
-    .chip{font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:999px;color:#fff;background:var(--pc);}
-    .agechip{font-family:var(--mono);font-size:10.5px;font-weight:700;color:#fff;background:var(--ac);padding:2px 7px;border-radius:999px;}
-    .wrapchip{font-size:10px;font-weight:700;color:var(--link);background:var(--hi);border:1px solid var(--hiline);padding:1px 7px;border-radius:999px;}
-    .newtag{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--link);background:var(--hi);border:1px solid var(--hiline);padding:1px 7px;border-radius:999px;}
-    .tk-last{margin-left:auto;color:var(--faint);font-size:11px;font-family:var(--mono);white-space:nowrap;}
-    .tk-title{font-weight:600;font-size:14px;margin:6px 0 0;text-wrap:balance;}
-    .tk-meta{color:var(--muted);font-size:12px;margin-top:2px;}
-    .tk-tags{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;}
-    .tk-tag{font-size:10px;color:var(--muted);background:var(--panel);border:1px solid var(--line);padding:1px 6px;border-radius:5px;}
-    .cmp-tag{font-family:var(--mono);font-size:10px;color:var(--link);background:var(--hi);border:1px solid var(--hiline);padding:1px 6px;border-radius:5px;}
-    .ov-name .cmp{font-family:var(--mono);font-size:12.5px;font-weight:700;}
-    .ov-name .path{font-family:var(--mono);font-size:10.5px;color:var(--faint);font-weight:400;}
-
-    .wrapup{margin:10px 13px 2px;background:#f7f9fc;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:12.5px;}
-    .wrapup .row{display:flex;gap:8px;padding:3px 0;}
-    .wrapup .lab{flex:0 0 74px;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.04em;padding-top:2px;}
-    .wrapup .lab.p{color:#d63122;}.wrapup .lab.f{color:#007769;}.wrapup .lab.t{color:#4a1fff;}
-    .wrapup .val{color:#2a3138;}
-
-    .scroll{overflow-x:auto;border-top:1px solid var(--line);margin-top:10px;}
-    table{border-collapse:collapse;width:100%;font-size:12.5px;min-width:460px;}
-    th,td{text-align:left;padding:6px 11px;border-top:1px solid var(--line);vertical-align:top;}
-    thead th{background:var(--panel);color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-top:none;white-space:nowrap;}
-    td.t{white-space:nowrap;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11.5px;color:#3a424c;}
-    tr.win td{background:#f6f4fe;}
-    .k-status{font-weight:700;font-size:10.5px;color:var(--sc-row);white-space:nowrap;}
-    .k-comment{font-weight:700;font-size:10.5px;color:var(--muted);white-space:nowrap;}
-    .who{white-space:nowrap;color:#3a424c;font-size:12px;}
-    .flow{font-family:var(--mono);font-size:11.5px;white-space:nowrap;}.flow b{color:var(--sc-row);}
-    .body{color:#2a3138;}
-    .none{color:var(--faint);font-style:italic;padding:9px 13px;font-size:12.5px;}
-    .foot{color:var(--faint);font-size:11.5px;margin-top:30px;border-top:1px solid var(--line);padding-top:13px;line-height:1.6;}
-    a.board{color:var(--link);text-decoration:none;font-weight:600;}
-    @media(max-width:640px){.h1{font-size:20px;}.stat .n{font-size:22px;}.qa-ti{white-space:normal;}.wrapup .lab{flex-basis:60px;}}
-    ''', '</style>', '<div class="wrap">']
-
-    o.append('<div class="eyebrow">NOVA Board · 12-Hour Handoff</div>')
-    o.append('<div class="h1">QA → Prod Handoff</div>')
-    o.append(f'<p class="sub">Snapshot <b>{ufmt(now)} UTC</b> · <b>NOVA</b> · {len(tickets)} in pipeline · all times UTC · '
-             f'<a class="board" href="{BOARD_URL}">NOVA board ↗</a></p>')
+    # ── center column ────────────────────────────────────────────────────
+    o.append('<main class="main">')
+    o.append(f'<div class="hd"><div><h1>QA → Prod Handoff</h1>'
+             f'<div class="sub">{len(tickets)} tickets in pipeline · <b>{len(delta)}</b> changed in the last 12h · all times UTC</div></div>'
+             f'<div class="pill">📅 snapshot {ufmt(now)} UTC</div></div>')
 
     o.append('<div class="stats">')
     for s in STATUS_ORDER:
-        c, label = STATUS_META[s]
-        o.append(f'<div class="stat" style="--sc:{c}"><div class="n">{counts[s]}</div><div class="l">{label}</div></div>')
+        c, label, ic = STATUS_META[s]
+        a = arrivals[s]
+        d = f'<span class="d up">↑ +{a} in 12h</span>' if a else '<span class="d flat">flat</span>'
+        o.append(f'<div class="stat"><div class="top"><span class="ic" style="--tint:{c}22;color:{c}">{ic}</span>{label}</div>'
+                 f'<div class="n">{counts[s]}{d}</div></div>')
     o.append('</div>')
 
-    # ---- HERO ----
-    o.append('<div class="hero">')
-    o.append(f'<div class="block-h"><h2>🔔 Since last handoff</h2><span class="meta">last 12h · {ufmt(cutoff)} → {ufmt(now)}</span></div>')
-    if not delta:
-        o.append('<p class="d-none">No status changes or comments on NOVA pipeline tickets in the last 12 hours.</p>')
-    else:
-        for t, recent in delta:
-            c, label = STATUS_META.get(norm(t["currentStatus"]), ("#5b6675", t["currentStatus"].title()))
-            o.append(f'<div class="d-item" style="--sc:{c}"><div class="d-head">'
-                     f'<a href="{BASE_URL}{t["key"]}">{t["key"]}</a><span class="st">{label}</span>'
-                     f'<span class="ti">{esc(t["summary"])}</span></div><ul class="d-log">')
-            for dt, kind, who, detail in recent:
-                if kind == "status":
-                    o.append(f'<li><span class="tm">{ufmt(dt)}</span><span class="fl"><b>{esc(detail)}</b></span></li>')
-                else:
-                    o.append(f'<li><span class="tm">{ufmt(dt)}</span><span class="cm">💬 {esc(who)}: {esc(detail)}</span></li>')
-            o.append('</ul></div>')
+    # pipeline trend
+    o.append('<div class="card"><div class="hrow"><h3>Pipeline flow · last 10 days</h3>'
+             '<div class="legend"><span><i style="background:#f0a45e"></i>Entered QA</span>'
+             '<span><i style="background:#2fd6a6"></i>Deployed</span></div></div>')
+    o.append(trend_svg(tickets, now))
     o.append('</div>')
 
-    # ---- IN QA aging ----
+    # In-QA aging watch
+    o.append('<div class="card"><div class="hrow"><h3>⏳ In QA — aging watch</h3>'
+             '<span class="cnt" style="color:var(--faint);font-size:12px">longest first</span></div>')
     if qa:
-        o.append('<div class="panel">')
-        o.append('<div class="block-h"><h2>⏳ In QA — aging watch</h2><span class="meta">longest-waiting first</span></div>')
+        o.append('<div class="rowlist">')
         for t, td in qa:
-            ac = qa_color(td)
-            o.append(f'<div class="qa-row">'
-                     f'<span class="qa-age" style="--ac:{ac}">{fmt_dwell(td)}</span>'
-                     f'<a class="qa-key" href="{BASE_URL}{t["key"]}">{t["key"]}</a>'
-                     f'<span class="qa-ti">{esc(t["summary"])}</span>'
-                     f'<span class="qa-who">{esc(t.get("assignee","—"))}</span></div>')
-        o.append('<p class="legend">age = time since entering IN QA · green &lt;2d · orange 2–3d (flagged) · red ≥3d</p>')
+            o.append(f'<div class="row"><span class="age" style="background:{qa_color(td)}">{fmt_dwell(td)}</span>'
+                     f'<a class="k" href="{BASE_URL}{t["key"]}">{t["key"]}</a>'
+                     f'<span class="ti">{esc(t["summary"])}</span>'
+                     f'<span class="who">{esc(t.get("assignee","—"))}</span></div>')
         o.append('</div>')
+    else:
+        o.append('<div class="none">Nothing sitting in QA.</div>')
+    o.append('</div>')
 
-    # ---- Module overlap ----
-    if clusters:
-        o.append('<div class="panel">')
-        o.append('<div class="block-h"><h2>🔗 Module risk</h2><span class="meta">nova areas with active changes — regress together</span></div>')
+    # module / component risk
+    o.append('<div class="card"><div class="hrow"><h3>🔗 Module risk</h3>'
+             '<span class="cnt" style="color:var(--faint);font-size:12px">regress together</span></div>')
+    if clusters or comp_clusters:
+        o.append('<div class="mods">')
+        def mod_card(name, tks, mono=False):
+            lbl, col = risk_of(tks); stg = stage_counts(tks)
+            pills = "".join(
+                f'<span class="mp" style="background:{STATUS_META[s][0]}22;color:{STATUS_META[s][0]}">{stg[s]} {STAGE_SHORT[s]}</span>'
+                for s in STATUS_ORDER if stg.get(s))
+            nm = f'<span class="nm mono">{esc(name)}</span>' if mono else f'<span class="nm">{esc(name)}</span>'
+            return (f'<div class="mod" style="--mc:{col}"><div class="mtop"><span class="rk" style="background:{col}">{lbl}</span>{nm}</div>'
+                    f'<div class="mini">{pills}</div></div>')
         for tag, tks in clusters:
-            risk_lbl, risk_col = risk_of(tks)
-            op = " open" if risk_lbl == "HIGH" else ""
-            o.append(f'<details class="riskcard"{op} style="--rc:{risk_col}"><summary>'
-                     f'<span class="chev">▶</span>'
-                     f'<span class="lvl">{risk_lbl}</span>'
-                     f'<span class="nm">{esc(tag)}</span>'
-                     f'<span class="ct">{len(tks)}</span>'
-                     f'<span class="dist">{dist_pills(stage_counts(tks))}</span></summary>'
-                     f'<div class="rc-body">{stage_columns(tks)}</div></details>')
-        o.append('<p class="legend">HIGH = changes across multiple stages, or 4+ concurrent tickets · '
-                 'columns are the pipeline stage each ticket sits in: <b style="color:#e78c49">QA</b> · '
-                 '<b style="color:#4a1fff">Ready</b> · <b style="color:#007769">Prod</b></p>')
-        o.append('</div>')
-
-    # ---- Component (file-level) overlap ----
-    if comp_clusters:
-        o.append('<div class="panel">')
-        o.append('<div class="block-h"><h2>🧩 Shared components</h2><span class="meta">same nova-web file touched by multiple tickets — highest-confidence regression</span></div>')
+            o.append(mod_card(tag, tks))
         for comp, tks in comp_clusters:
-            risk_lbl, risk_col = risk_of(tks)
-            op = " open" if risk_lbl == "HIGH" else ""
-            o.append(f'<details class="riskcard"{op} style="--rc:{risk_col}"><summary>'
-                     f'<span class="chev">▶</span>'
-                     f'<span class="lvl">{risk_lbl}</span>'
-                     f'<span class="nm mono">{esc(comp)}</span>'
-                     f'<span class="ct">{len(tks)}</span>'
-                     f'<span class="dist">{dist_pills(stage_counts(tks))}</span></summary>'
-                     f'<div class="rc-body"><div class="rc-path">{esc(comp_path.get(comp,""))}</div>'
-                     f'{stage_columns(tks)}</div></details>')
-        o.append('<p class="legend">these tickets edit the same file — QA them together before release · paths are under nova-web <code>src/</code></p>')
+            o.append(mod_card(comp, tks, mono=True))
         o.append('</div>')
+    else:
+        o.append('<div class="none">No modules with 2+ concurrent tickets.</div>')
+    o.append('</div>')
 
-    # ---- Pipeline (collapsible) ----
-    o.append('<div class="block-h" style="margin-top:8px"><h2>Full pipeline</h2><span class="meta">tap a section, then a ticket, to expand</span></div>')
+    # collapsible pipeline sections
     for s in STATUS_ORDER:
-        c, label = STATUS_META[s]
-        sec_open = " open" if s != "DEPLOYED TO PROD" else ""
-        o.append(f'<details class="sec"{sec_open} style="--sc:{c}">')
-        o.append(f'<summary><span class="chev">▶</span><span class="dot"></span>{label}<span class="cnt">{counts[s]}</span></summary>')
-        o.append('<div class="sec-body">')
-        for t in by_status.get(s, []):
-            prio = t.get("priority","-") or "-"
+        c, label, ic = STATUS_META[s]
+        op = "" if s == "DEPLOYED TO PROD" else " open"
+        o.append(f'<details class="sec"{op}><summary style="color:{c}"><span class="chev">▶</span>{ic} {label}<span class="cnt">{counts[s]}</span></summary>')
+        rows = by_status.get(s, [])
+        if not rows:
+            o.append('<div class="tk"><span class="mt" style="color:var(--faint)">None.</span></div>')
+        for t in rows:
+            prio = t.get("priority", "-") or "-"
             acts = activity(t)
-            lt = acts[-1][0] if acts else None
-            fresh = lt is not None and lt >= cutoff
+            fresh = bool(acts) and acts[-1][0] >= cutoff
             wrap = parse_wrapup(t.get("comments", []))
-            tags = sorted(ticket_tags(t))
-            tk_open = " open" if fresh else ""
-            o.append(f'<details class="tk"{tk_open} style="--sc:{c};--sc-row:{c}"><summary><div class="tk-top">')
-            o.append(f'<a class="tk-key" href="{BASE_URL}{t["key"]}">{t["key"]}</a>')
-            o.append(f'<span class="chip" style="--pc:{PRIO_COLOR.get(prio,"#8a93a0")}">{prio}</span>')
-            if s == "IN QA":
-                e = qa_entered(t)
-                if e is not None:
-                    td = now - e
-                    o.append(f'<span class="agechip" style="--ac:{qa_color(td)}">⏳ {fmt_dwell(td)} in QA</span>')
-            if wrap: o.append('<span class="wrapchip">📋 wrap-up</span>')
-            if fresh: o.append('<span class="newtag">● updated</span>')
-            o.append(f'<span class="tk-last">last {ufmt(lt) if lt else "—"}</span>')
-            o.append('</div>')
-            o.append(f'<div class="tk-title">{esc(t["summary"])}</div>')
-            o.append(f'<div class="tk-meta">{esc(t.get("assignee","—"))}</div>')
             comps = ticket_components(t)
-            if tags or comps:
-                o.append('<div class="tk-tags">')
-                o.append("".join(f'<span class="tk-tag">{esc(x)}</span>' for x in tags))
-                o.append("".join(f'<span class="cmp-tag" title="{esc(p)}">🧩 {esc(c)}</span>' for c, (p, m) in sorted(comps.items())))
-                o.append('</div>')
-            o.append('</summary>')
-            if wrap:
-                o.append('<div class="wrapup">')
-                if wrap["problem"]: o.append(f'<div class="row"><span class="lab p">Problem</span><span class="val">{esc(wrap["problem"])}</span></div>')
-                if wrap["fix"]:     o.append(f'<div class="row"><span class="lab f">Fix</span><span class="val">{esc(wrap["fix"])}</span></div>')
-                if wrap["test"]:    o.append(f'<div class="row"><span class="lab t">How to test</span><span class="val">{esc(wrap["test"])}</span></div>')
-                o.append('</div>')
-            if not acts:
-                o.append('<div class="none">No status changes or comments recorded.</div>')
-            else:
-                o.append('<div class="scroll"><table><thead><tr><th>UTC time</th><th>Kind</th><th>Who</th><th>Activity</th></tr></thead><tbody>')
-                for dt, kind, who, detail in acts:
-                    win = ' class="win"' if dt >= cutoff else ''
-                    if kind == "status":
-                        typ='<span class="k-status">● STATUS</span>'; det=f'<span class="flow"><b>{esc(detail)}</b></span>'
-                    else:
-                        typ='<span class="k-comment">○ comment</span>'; det=f'<span class="body">{esc(detail)}</span>'
-                    o.append(f'<tr{win}><td class="t">{ufmt(dt)}</td><td>{typ}</td><td class="who">{esc(who)}</td><td>{det}</td></tr>')
-                o.append('</tbody></table></div>')
-            o.append('</details>')
-        o.append('</div></details>')
+            o.append('<div class="tk"><div class="l1">')
+            o.append(f'<a class="kk" href="{BASE_URL}{t["key"]}">{t["key"]}</a>')
+            o.append(f'<span class="tt">{esc(t["summary"])}</span>')
+            if fresh: o.append('<span class="chip new">updated</span>')
+            if wrap: o.append('<span class="chip wrap">wrap-up</span>')
+            o.append('</div>')
+            o.append(f'<div class="mt">{esc(t.get("assignee","—"))} · {esc(prio)}')
+            if comps:
+                o.append(' ' + "".join(f'<span class="cmp">{esc(cn)}</span>' for cn in sorted(comps)))
+            o.append('</div></div>')
+        o.append('</details>')
+    o.append('</main>')
 
-    o.append('<div class="foot">NOVA board only · rebuilt every 12h (07:00 & 19:00 UTC). '
-             'Priority views: changes-since-last-handoff, In-QA aging, and module-overlap (regress-together). '
-             'Ticket wrap-ups (Problem / Fix / How to test) are parsed from dev comments. QA age = time since a ticket last entered IN QA. Times UTC.</div>')
+    # ── right rail: since-last-handoff feed ──────────────────────────────
+    o.append('<aside class="right">')
+    o.append(f'<div class="stcard"><div class="big">Handoff · {now.astimezone(UTC).strftime("%b %-d")}</div>'
+             f'<div class="sm">{ufmt(now)} UTC snapshot</div>'
+             '<div class="btns"><span class="b">↻ 07:00 UTC</span><span class="b">↻ 19:00 UTC</span></div></div>')
+    o.append('<div class="feedh">🔔 Since last handoff</div>')
+    if not delta:
+        o.append('<div class="none">No status changes or comments in the last 12 hours.</div>')
+    else:
+        for t, (dt, kind, who, detail) in delta[:10]:
+            sc = norm(t["currentStatus"])
+            col, label, _ = STATUS_META.get(sc, ("#5f6675", t["currentStatus"].title(), ""))
+            o.append('<div class="fitem">')
+            o.append(f'<span class="av" style="background:{col}">{esc(initials(who))}</span>')
+            o.append('<div class="body">')
+            o.append(f'<div class="who">{t["key"]} <span class="st" style="background:{col}">{label}</span></div>')
+            o.append(f'<div class="meta">{ufmt(dt)} · {esc(who)}</div>')
+            o.append(f'<div class="ftt">{esc(_short_body(t["summary"], 90))}</div>')
+            if kind == "status":
+                o.append(f'<div class="msg flow">{esc(detail)}</div>')
+            else:
+                o.append(f'<div class="msg">{esc(_short_body(detail))}</div>')
+            o.append('</div></div>')
+    o.append('</aside>')
+
     o.append('</div>')
     return "\n".join(o)
 
