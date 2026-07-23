@@ -180,6 +180,16 @@ def _short_body(s, n=150):
     s = re.sub(r'\s+', ' ', (s or "")).strip()
     return s if len(s) <= n else s[:n-1].rstrip() + "…"
 
+def _redact_names(text, names):
+    """Strip person names from free text before it's rendered on the public page:
+    generic Jira @mentions (1-3 capitalized tokens) plus any known display name."""
+    if not text:
+        return text
+    text = re.sub(r"@[A-Z][\w.'’-]+(?:\s+[A-Z][\w.'’-]+){0,2}", "@teammate", text)
+    for n in sorted((x for x in names if x), key=len, reverse=True):
+        text = text.replace(n, "a teammate")
+    return text
+
 def _smooth(pts, baseline):
     """Catmull-Rom → cubic-bezier path. Returns (line_d, area_d)."""
     if not pts:
@@ -320,6 +330,15 @@ CSS = """
 
 def report(tickets, now):
     cutoff = now - WINDOW
+    # person names to redact from any free text rendered on the public page
+    person_names = set()
+    for _t in tickets:
+        if _t.get("assignee"): person_names.add(_t["assignee"])
+        for _sc in _t.get("statusChanges", []):
+            if _sc.get("author"): person_names.add(_sc["author"])
+        for _c in _t.get("comments", []):
+            if _c.get("author"): person_names.add(_c["author"])
+    red = lambda s: _redact_names(s, person_names)
     by_status = {s: [] for s in STATUS_ORDER}
     for t in tickets:
         by_status.setdefault(norm(t["currentStatus"]), []).append(t)
@@ -415,7 +434,7 @@ def report(tickets, now):
         for t, td in qa:
             o.append(f'<div class="row"><span class="age" style="background:{qa_color(td)}">{fmt_dwell(td)}</span>'
                      f'<a class="k" href="{BASE_URL}{t["key"]}">{t["key"]}</a>'
-                     f'<span class="ti">{esc(t["summary"])}</span></div>')
+                     f'<span class="ti">{esc(red(t["summary"]))}</span></div>')
         o.append('</div>')
     else:
         o.append('<div class="none">Nothing sitting in QA.</div>')
@@ -459,7 +478,7 @@ def report(tickets, now):
             comps = ticket_components(t)
             o.append('<div class="tk"><div class="l1">')
             o.append(f'<a class="kk" href="{BASE_URL}{t["key"]}">{t["key"]}</a>')
-            o.append(f'<span class="tt">{esc(t["summary"])}</span>')
+            o.append(f'<span class="tt">{esc(red(t["summary"]))}</span>')
             if fresh: o.append('<span class="chip new">updated</span>')
             if wrap: o.append('<span class="chip wrap">wrap-up</span>')
             o.append('</div>')
@@ -487,11 +506,11 @@ def report(tickets, now):
             o.append('<div class="body">')
             o.append(f'<div class="who">{t["key"]} <span class="st" style="background:{col}">{label}</span></div>')
             o.append(f'<div class="meta">{ufmt(dt)} UTC</div>')
-            o.append(f'<div class="ftt">{esc(_short_body(t["summary"], 90))}</div>')
+            o.append(f'<div class="ftt">{esc(red(_short_body(t["summary"], 90)))}</div>')
             if kind == "status":
                 o.append(f'<div class="msg flow">{esc(detail)}</div>')
             else:
-                o.append(f'<div class="msg">{esc(_short_body(detail))}</div>')
+                o.append(f'<div class="msg">{esc(red(_short_body(detail)))}</div>')
             o.append('</div></div>')
     o.append('</aside>')
 
