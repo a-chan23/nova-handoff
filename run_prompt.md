@@ -38,12 +38,14 @@ STEPS
 8. Load the Slack tool (ToolSearch "slack send message") and post to channel C0B398LUE12: counts per status + a
    "Since last handoff (last 12h)" bullet list (KEY → STATUS — summary), the two oldest In-QA tickets (aging watch),
    the top HIGH-risk modules, and the dashboard + board links. If zero changed in 12h, say so. All times UTC.
-   LINK FORMATTING (required): always write every URL as a bounded Slack markdown link — [label](url) — never a
-   bare URL. Slack auto-links a bare URL and greedily swallows any following character (including an emoji or the
-   newline+emoji on the next line) into the hyperlink target, producing a broken link. So: no bare URLs, and never
-   place an emoji, label, or another link immediately before/after a bare URL. Put the dashboard and board links on
-   their own lines as e.g. `📊 Dashboard: [NOVA QA→Prod Handoff](https://a-chan23.github.io/nova-handoff/)` and
-   `📋 NOVA board: [board 338](<board-url>)` — the emoji sits outside the [ ](  ) so it can never be absorbed.
-   Use the GitHub Pages URL above as the dashboard link (not a claude.ai artifact URL).
+   LINK FORMATTING (required):
+   - The dashboard link MUST be the GitHub Pages URL https://a-chan23.github.io/nova-handoff/ — NEVER a
+     claude.ai artifact URL (the artifact is retired).
+   - Always write every URL as a bounded Slack markdown link — [label](url) — never a bare URL. Slack auto-links
+     a bare URL and greedily swallows any following character into the hyperlink target, producing a broken link.
+   - Put NO emoji on the dashboard/board link lines (and never place any emoji, label, or another link
+     immediately before or after a URL). Keep each link on its own line with a plain text prefix only, e.g.:
+       `Dashboard: [NOVA QA→Prod Handoff](https://a-chan23.github.io/nova-handoff/)`
+       `NOVA board: [board 338](<board-url>)`
 
 RULES: only NOVA-* keys, only those 3 statuses. If Jira fails, do NOT post — exit with the error. If Slack fails, report why.

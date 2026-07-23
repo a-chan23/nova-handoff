@@ -39,9 +39,11 @@ below takes ~1 minute.
 2. `searchJiraIssuesUsingJql` (cloudId above): `project = NOVA AND status in ("In QA","Ready for Prod","Deployed to Prod") ORDER BY status ASC, updated DESC`, fields summary/status/assignee.
 3. Per ticket: `getJiraIssue` with `expand=changelog` + comments; keep only status-field changes + comments. **Integrity check:** confirm returned key/webUrl matches the requested key (this API occasionally returns a different issue); re-fetch if mismatched.
 4. Compute counts per status + the **12h delta** (tickets whose newest status change or comment is within the last 12h of run time).
-5. Post the handoff summary to Slack `C0B398LUE12` with links to the dashboard
-   (`https://claude.ai/code/artifact/8c72efff-a113-470e-a376-92e482d0552a`) and the NOVA board
-   (`https://powerdigital.atlassian.net/jira/software/c/projects/NOVA/boards/338`).
+5. Publish the refreshed dashboard by committing `docs/index.html` to `main` (GitHub Pages redeploys it
+   automatically — no approval gate), then post the handoff summary to Slack `C0B398LUE12` with links to the
+   dashboard (`https://a-chan23.github.io/nova-handoff/`) and the NOVA board
+   (`https://powerdigital.atlassian.net/jira/software/c/projects/NOVA/boards/338`). Write links as bounded
+   markdown `[label](url)` with NO emoji on the link lines; never post a claude.ai artifact URL.
    Only NOVA-* keys, only the 3 pipeline statuses, all times UTC. If Jira fails, do not post — report the error.
 
 ## Status of other schedulers (cleanup)
@@ -50,4 +52,4 @@ below takes ~1 minute.
 
 ## Manual fallback (anytime, until the routine is live)
 Ask Claude: "refresh the NOVA handoff and post it to #qa-daily-reports" — it pulls live Jira,
-rebuilds `nova_handoff.html` via `gen_nova_handoff.py`, republishes the artifact, and posts to Slack.
+rebuilds `docs/index.html` via `gen_nova_handoff.py`, commits/pushes it (GitHub Pages redeploys), and posts to Slack.
