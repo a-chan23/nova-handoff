@@ -4,9 +4,10 @@ locally and in a cloud environment (no absolute machine paths).
 
 CONTEXT
 - Jira Cloud cloudId = 102ca926-70a5-403c-b785-a8e617f1041e (tenant powerdigital.atlassian.net)
-- Generator: ./gen_nova_handoff.py (reads ./tickets.json and ./component_index.json, writes ./nova_handoff.html;
-  times in UTC; the 12h handoff window is computed from the current time automatically)
-- Artifact to update IN PLACE: https://claude.ai/code/artifact/8c72efff-a113-470e-a376-92e482d0552a
+- Generator: ./gen_nova_handoff.py (reads ./tickets.json and ./component_index.json, writes BOTH
+  ./nova_handoff.html and ./docs/index.html; times in UTC; the 12h handoff window is computed automatically)
+- Live dashboard (GitHub Pages, refreshes on push, NO approval gate): https://a-chan23.github.io/nova-handoff/
+  Pages serves ./docs/index.html from the `main` branch. This is the canonical dashboard URL — post THIS in Slack.
 - Slack channel: C0B398LUE12 (#qa-daily-reports)
 - NOVA board: https://powerdigital.atlassian.net/jira/software/c/projects/NOVA/boards/338
 
@@ -22,9 +23,16 @@ STEPS
    different issue; re-fetch directly if mismatched.
 4. Overwrite ./tickets.json (JSON array), one object per ticket:
    {"key","summary","currentStatus","assignee","priority","statusChanges":[{"ts","author","from","to"}],"comments":[{"ts","author","body"}]}
-5. Run: python3 gen_nova_handoff.py   (from repo root; it writes ./nova_handoff.html)
-6. Republish ./nova_handoff.html to the SAME artifact (Artifact tool: url=https://claude.ai/code/artifact/8c72efff-a113-470e-a376-92e482d0552a,
-   favicon 🚦; retry with force=true on 409).
+5. Run: python3 gen_nova_handoff.py   (from repo root; it writes ./nova_handoff.html AND ./docs/index.html)
+6. Publish the refreshed dashboard by committing ./docs/index.html to `main` and pushing — GitHub Pages
+   redeploys automatically with NO approval prompt. Do this with the git CLI from the repo root:
+     git add docs/index.html
+     git commit -m "Refresh NOVA handoff dashboard <UTC timestamp>"   (skip the commit if nothing changed)
+     git push origin HEAD:main
+   The live page https://a-chan23.github.io/nova-handoff/ updates within ~1 minute. (Do NOT rely on the
+   claude.ai Artifact tool here — headless/scheduled runs cannot satisfy its publish-approval gate, which is
+   why the dashboard previously went stale.) tickets.json and nova_handoff.html stay git-ignored; only
+   docs/index.html is committed.
 7. Compute from tickets.json: counts per status, and the handoff delta = tickets whose newest statusChange OR comment
    is within the last 12h of current UTC time.
 8. Load the Slack tool (ToolSearch "slack send message") and post to channel C0B398LUE12: counts per status + a
@@ -34,7 +42,8 @@ STEPS
    bare URL. Slack auto-links a bare URL and greedily swallows any following character (including an emoji or the
    newline+emoji on the next line) into the hyperlink target, producing a broken link. So: no bare URLs, and never
    place an emoji, label, or another link immediately before/after a bare URL. Put the dashboard and board links on
-   their own lines as e.g. `📊 Dashboard: [NOVA QA→Prod Handoff](<dashboard-url>)` and
+   their own lines as e.g. `📊 Dashboard: [NOVA QA→Prod Handoff](https://a-chan23.github.io/nova-handoff/)` and
    `📋 NOVA board: [board 338](<board-url>)` — the emoji sits outside the [ ](  ) so it can never be absorbed.
+   Use the GitHub Pages URL above as the dashboard link (not a claude.ai artifact URL).
 
 RULES: only NOVA-* keys, only those 3 statuses. If Jira fails, do NOT post — exit with the error. If Slack fails, report why.

@@ -510,6 +510,13 @@ if __name__ == "__main__":
         tickets = json.load(f)
     env_now = os.environ.get("HANDOFF_NOW")
     now = parse(env_now).astimezone(UTC) if env_now else datetime.now(UTC)
+    html = report(tickets, now)
+    # Local/artifact copy
     with open(os.path.join(HERE, "nova_handoff.html"), "w") as f:
-        f.write(report(tickets, now))
-    print(f"Wrote nova_handoff.html · {len(tickets)} NOVA tickets · now={now.isoformat()}")
+        f.write(html)
+    # GitHub Pages copy — committed and served at https://a-chan23.github.io/nova-handoff/
+    docs_dir = os.path.join(HERE, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
+    with open(os.path.join(docs_dir, "index.html"), "w") as f:
+        f.write(html)
+    print(f"Wrote nova_handoff.html + docs/index.html · {len(tickets)} NOVA tickets · now={now.isoformat()}")
