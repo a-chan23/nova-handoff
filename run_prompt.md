@@ -30,5 +30,11 @@ STEPS
 8. Load the Slack tool (ToolSearch "slack send message") and post to channel C0B398LUE12: counts per status + a
    "Since last handoff (last 12h)" bullet list (KEY → STATUS — summary), the two oldest In-QA tickets (aging watch),
    the top HIGH-risk modules, and the dashboard + board links. If zero changed in 12h, say so. All times UTC.
+   LINK FORMATTING (required): always write every URL as a bounded Slack markdown link — [label](url) — never a
+   bare URL. Slack auto-links a bare URL and greedily swallows any following character (including an emoji or the
+   newline+emoji on the next line) into the hyperlink target, producing a broken link. So: no bare URLs, and never
+   place an emoji, label, or another link immediately before/after a bare URL. Put the dashboard and board links on
+   their own lines as e.g. `📊 Dashboard: [NOVA QA→Prod Handoff](<dashboard-url>)` and
+   `📋 NOVA board: [board 338](<board-url>)` — the emoji sits outside the [ ](  ) so it can never be absorbed.
 
 RULES: only NOVA-* keys, only those 3 statuses. If Jira fails, do NOT post — exit with the error. If Slack fails, report why.
