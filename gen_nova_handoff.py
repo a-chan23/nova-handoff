@@ -176,12 +176,6 @@ def parse_wrapup(comments):
     return {"problem": problem, "fix": fix, "test": test}
 
 # ── dark-dashboard render helpers ───────────────────────────────────────────
-def initials(name):
-    parts = [p for p in re.split(r'\s+', (name or "").strip()) if p]
-    if not parts: return "—"
-    if len(parts) == 1: return parts[0][:2].upper()
-    return (parts[0][0] + parts[1][0]).upper()
-
 def _short_body(s, n=150):
     s = re.sub(r'\s+', ' ', (s or "")).strip()
     return s if len(s) <= n else s[:n-1].rstrip() + "…"
@@ -421,8 +415,7 @@ def report(tickets, now):
         for t, td in qa:
             o.append(f'<div class="row"><span class="age" style="background:{qa_color(td)}">{fmt_dwell(td)}</span>'
                      f'<a class="k" href="{BASE_URL}{t["key"]}">{t["key"]}</a>'
-                     f'<span class="ti">{esc(t["summary"])}</span>'
-                     f'<span class="who">{esc(t.get("assignee","—"))}</span></div>')
+                     f'<span class="ti">{esc(t["summary"])}</span></div>')
         o.append('</div>')
     else:
         o.append('<div class="none">Nothing sitting in QA.</div>')
@@ -470,7 +463,7 @@ def report(tickets, now):
             if fresh: o.append('<span class="chip new">updated</span>')
             if wrap: o.append('<span class="chip wrap">wrap-up</span>')
             o.append('</div>')
-            o.append(f'<div class="mt">{esc(t.get("assignee","—"))} · {esc(prio)}')
+            o.append(f'<div class="mt">{esc(prio)}')
             if comps:
                 o.append(' ' + "".join(f'<span class="cmp">{esc(cn)}</span>' for cn in sorted(comps)))
             o.append('</div></div>')
@@ -490,10 +483,10 @@ def report(tickets, now):
             sc = norm(t["currentStatus"])
             col, label, _ = STATUS_META.get(sc, ("#5f6675", t["currentStatus"].title(), ""))
             o.append('<div class="fitem">')
-            o.append(f'<span class="av" style="background:{col}">{esc(initials(who))}</span>')
+            o.append(f'<span class="av" style="background:{col}">{"↻" if kind == "status" else "💬"}</span>')
             o.append('<div class="body">')
             o.append(f'<div class="who">{t["key"]} <span class="st" style="background:{col}">{label}</span></div>')
-            o.append(f'<div class="meta">{ufmt(dt)} · {esc(who)}</div>')
+            o.append(f'<div class="meta">{ufmt(dt)} UTC</div>')
             o.append(f'<div class="ftt">{esc(_short_body(t["summary"], 90))}</div>')
             if kind == "status":
                 o.append(f'<div class="msg flow">{esc(detail)}</div>')
