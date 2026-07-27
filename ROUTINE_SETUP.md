@@ -1,8 +1,8 @@
 # NOVA QA→Prod Handoff — Cloud Routine Setup (pending IT/innovation)
 
 **Goal:** Post the NOVA board QA→Prod handoff to Slack **#qa-daily-reports** twice daily at
-**07:00 & 19:00 UTC** (the two shift handoffs), running in the cloud so it does **not** depend on
-anyone's laptop being awake.
+**01:00 & 17:00 UTC** — 09:00 Taipei and 09:00 PST, the two shift handoffs — running in the cloud
+so it does **not** depend on anyone's laptop being awake.
 
 ## What IT / the innovation team needs to provision
 A Claude Code **cloud environment** (`environment_id`, looks like `env_…`) **or** a
@@ -19,14 +19,14 @@ A Claude Code **cloud environment** (`environment_id`, looks like `env_…`) **o
 below takes ~1 minute.
 
 ## Schedule
-- cron: `0 7,19 * * *`, timezone `UTC`  → 07:00 and 19:00 UTC daily.
+- cron: `0 1,17 * * *`, timezone `UTC`  → 01:00 (09:00 Taipei) and 17:00 (09:00 PST) UTC daily.
 
 ## Routine payload (RemoteTrigger `create`) — fill in the id
 ```json
 {
   "name": "NOVA QA→Prod Handoff (2x daily)",
   "job_config": {
-    "cron": "0 7,19 * * *",
+    "cron": "0 1,17 * * *",
     "timezone": "UTC",
     "ccr": { "environment_id": "<ENV_ID_FROM_IT>" }
   },
