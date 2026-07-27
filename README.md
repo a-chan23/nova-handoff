@@ -24,7 +24,7 @@ on `main`; redeploys automatically on every push — no publish-approval gate).
 1. Push this folder to a Git repo (GitHub or Bitbucket).
 2. Sign in at **claude.ai/code** and **connect that repo** (this creates the cloud environment).
 3. Create a **Routine**:
-   - Schedule: `0 1,17 * * *` UTC — two start-of-day slots covering both shifts: 09:00 Taipei (01:00 UTC) and 09:00 PST (17:00 UTC).
+   - Schedule: `0 1,16 * * *` UTC — two start-of-day slots covering both shifts: 09:00 Taipei (01:00 UTC) and 09:00 Pacific/PDT (16:00 UTC). Note: fixed UTC cron, so during Pacific standard time (winter) the second slot lands at 08:00 PST — bump to 17:00 UTC if you want 09:00 year-round.
    - Prompt: "Read `run_prompt.md` in this repo and execute it exactly and autonomously."
 4. Click **Run now** once to confirm the cloud env can reach the Jira + Slack connectors and can push to `main`.
 
